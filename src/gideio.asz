@@ -1,0 +1,185 @@
+; Hard disk access routines for the P112 using the GIDE interface.
+; Adapted from UZI180's hdasm.asz
+
+	global	_hdident
+	global	_hdread
+	global	_hdwrite
+
+	psect	text
+
+; Equates reflecting GIDE Base address from Address Jumpers
+
+GIDE	equ	50H		; Set base of 16 byte address range
+
+IDEDOR	equ	GIDE+6		; Digital Output Register
+IDEDat	equ	GIDE+8		; IDE Data Register (16-bit wide)
+IDEErr	equ	GIDE+9		; IDE Error Register
+IDESCnt	equ	GIDE+0AH	; IDE Sector Count Register
+IDESNum	equ	GIDE+0BH	; IDE Sector Number Register
+IDECLo	equ	GIDE+0CH	; IDE Cylinder Number (Low)
+IDECHi	equ	GIDE+0DH	; IDE Cylinter Number (High)
+IDESDH	equ	GIDE+0EH	; IDE S-Drive-Head Register
+IDECmd	equ	GIDE+0FH	; IDE Command/Status Register
+
+CMDHOM	equ	10H		; Home Drive Heads
+CMDRD	equ	20H		; Read Sector Command (w/retry)
+CMDWR	equ	30H		; Write Sector Command (w/retry)
+CMDVER	equ	40H		; Verify Sector(s) Command (w/retry)
+CMDFMT	equ	50H		; Format Track Command
+CMDDIAG	equ	90H		; Execute Diagnostics Command
+CMDINIT	equ	91H		; Initialize Drive Params Command
+CMDPW0	equ	0E0H		; Low Range of Power Control Commands
+CMDPW3	equ	0E3H		; High Range of Power Control Commands
+CMDPWQ	equ	0E5H		; Power Status Query Command
+CMDID	equ	0ECH		; Read Drive Ident Data Command
+
+;---------------------------------------------------------------------
+; hdident(struct IDRecord *buf);
+
+_hdident:
+	push	ix
+	ld	ix,0
+	add	ix,sp
+	call	wait_tmo	; wait up to several seconds for drive ready
+	jr	c,hrid4		; return if error
+	ld	l,(ix+4)
+	ld	h,(ix+5)	; get buffer address into HL
+	ld	bc,IDEDat	; preload data register address in C, 0 in B
+	ld	a,CMDID		; identify command
+	out0	(IDECmd),a	; start operation
+	call	wait		; wait for drive ready
+hrid1:	in0	a,(IDECmd)	; get status
+	bit	3,a		; ready?
+	jr	z,hrid1		; loop if not
+	inir			; read 512 bytes
+	inir			; in two-256 byte sequences
+	call	wait		; wait for drive to become ready
+hrid3:	in0	a,(IDECmd)	; restore byte
+	and	10001001B	; Busy, DRQ, or Error?
+	jr	z,hrid5		; exit if Ok
+hrid4:	ld	a,1		; else set error status = 1
+hrid5:	ld	l,a		; store
+	ld	h,0
+	pop	ix
+	ret
+
+;---------------------------------------------------------------------
+; hdread(int cyl, int head, int sector, char *buf);
+
+_hdread:
+	push	ix
+	ld	ix,0
+	add	ix,sp
+	call	wait_tmo	; wait up to several seconds for drive ready
+	jr	c,hrd4		; return if error
+	ld	a,(ix+8)	; get sector number
+	inc	a		; make sector number base at 1
+	out0	(IDESNum),a	; send to GIDE register
+	ld	a,(ix+6)	; get head number
+	or	0A0H		; add fixed pattern (assuming Unit 0, Master)
+	out0	(IDESDH),a	; send to GIDE register
+	ld	a,(ix+5)
+	out0	(IDECHi),a	; send hi-byte of cylinder number to GIDE
+	ld	a,(ix+4)
+	out0	(IDECLo),a	; and send lo-byte of cylinder number
+	ld	a,0AAH
+	out0	(IDEErr),a	; activate retries w/pattern in GIDE error reg
+	ld	a,1		; one block to read
+	out0	(IDESCnt),a	; pass it to GIDE
+	ld	l,(ix+10)
+	ld	h,(ix+11)	; get buffer address into HL
+	ld	bc,IDEDat	; preload data register address in C, 0 in B
+	ld	a,CMDRD		; read command
+	out0	(IDECmd),a	; start operation
+	call	wait		; wait for drive ready
+hrd1:	in0	a,(IDECmd)	; get status
+	bit	3,a		; ready?
+	jr	z,hrd1		; loop if not
+	inir			; read 512 bytes
+	inir			; in two-256 byte sequences
+hrd2:	call	wait		; wait for drive to become ready
+;; -- May need this with some older drives that send ECC bytes with no warning!
+;;	bit	4,a		; DRQ shifted?
+;;	jr	z,hrd3		; jump if not
+;;	in0	a,(IDEDat)	; else read data reg (ECC bytes)
+;;	jr	hrd2		; loop til no more data
+hrd3:	in0	a,(IDECmd)	; restore byte
+	and	10001001B	; Busy, DRQ, or Error?
+	jr	z,hrd5		; exit if Ok
+hrd4:	ld	a,1		; else set error status = 1
+hrd5:	ld	l,a		; store
+	ld	h,0
+	pop	ix
+	ret
+
+;---------------------------------------------------------------------
+; hdwrite(int cyl, int head, int sector, char *buf);
+
+_hdwrite:
+	push	ix
+	ld	ix,0
+	add	ix,sp
+	call	wait_tmo	; wait up to several seconds for drive ready
+	jr	c,hwr3		; if error return
+	ld	a,(ix+8)	; get sector number
+	inc	a		; make sector number base at 1
+	out0	(IDESNum),a	; send to GIDE register
+	ld	a,(ix+6)	; get head number
+	or	0A0H		; add fixed pattern (assuming Unit 0, Master)
+	out0	(IDESDH),a	; send to GIDE register
+	ld	a,(ix+5)
+	out0	(IDECHi),a	; send hi-byte of cylinder number to GIDE
+	ld	a,(ix+4)
+	out0	(IDECLo),a	; and send lo-byte of cylinder number
+	ld	a,0AAH
+	out0	(IDEErr),a	; activate retries w/pattern in GIDE error reg
+	ld	a,1		; one block to write
+	out0	(IDESCnt),a	; pass it to GIDE
+	ld	l,(ix+10)
+	ld	h,(ix+11)	; get buffer address into HL
+	ld	bc,IDEDat	; preload data register address in C, 0 in B
+	ld	a,CMDWR		; write command
+	out0	(IDECmd),a	; start operation
+	call	wait		; wait for drive ready
+hwr1:	in0	a,(IDECmd)	; get status
+	bit	3,a		; ready?
+	jr	z,hwr1		; loop if not
+	otir			; write 512 bytes
+	otir			; in two-256 byte operations
+hwr2:	call	wait		; wait for drive to become ready
+	in0	a,(IDECmd)	; restore byte
+	and	10001001B	; Busy, DRQ, or Error?
+	jr	z,hwr4		; exit if Ok
+hwr3:	ld	a,1		; else set error status = 1
+hwr4:	ld	l,a		; store
+	ld	h,0
+	pop	ix
+	ret
+
+; Wait for drive to become ready (no timeout)
+
+wait:
+	in0	a,(IDECmd)	; get drive status
+	rla			; Ready?
+	jr	c,wait		; loop if not
+	ret
+
+; Wait for drive to become ready (With Timeout)
+
+wait_tmo:
+	ld	bc,0		; wait up to several seconds for drive ready
+wt1:	in0	a,(IDECmd)	; get the busy bit
+	rla			; is it BSY?
+	ret	nc		; return if not
+	push	bc
+	ld	b,0
+wt2:	djnz	wt2		; else pause
+	pop	bc
+	dec	bc
+	ld	a,b
+	or	c
+	jr	nz,wt1		; loop if more time remains
+	scf
+	ret			; else return error
+
+	end

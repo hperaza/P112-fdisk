@@ -74,8 +74,8 @@ unsigned char hdbuf[1024];         /* new-style boot code is 2 sectors long */
 
 char *p112sign = "P112GIDE";
 
-int  hdcyls, hdheads, hdsecs;      /* disk geometry, as stored in ptable */
-int  idecyls, ideheads, idesecs;   /* disk geometry, as reported by the disk */
+unsigned int hdcyls, hdheads, hdsecs;    /* disk geometry, as stored in ptable */
+unsigned int idecyls, ideheads, idesecs; /* disk geometry, as reported by the disk */
 int  units, valid, idok;
 int  method, ptoffs, goffs, sgnoffs;
 char *filename;
@@ -139,7 +139,7 @@ int main(int argc, char *argv[])
     FILE *f;
     char cmd[100];
 
-    printf("P112 FDISK version 1.1 (GIDE)\n");
+    printf("P112 FDISK version 1.2 (GIDE)\n");
 
     filename = NULL;
     if (argc > 1) {
@@ -286,7 +286,8 @@ void ide_geometry()
 
 void read_ptable()
 {
-    int i, bootsz, cyls, heads, sectors, *p;
+    int i;
+    unsigned int  bootsz, cyls, heads, sectors, *p;
     unsigned char cks, *b;
 
     valid = 1;
@@ -538,7 +539,7 @@ void show_partitions()
 
     for (i = 0; i < MAX_ENTRIES; ++i) {
         if (ptable[i].size > 0) {
-            printf("%5d      %5d  %5d  %5d  %8lu      %s     %s\n",
+            printf("%5d      %5u  %5u  %5u  %8lu      %s     %s\n",
                    i + 1,
                    ptable[i].start,
                    ptable[i].start + ptable[i].size - 1,
@@ -565,7 +566,7 @@ void show_geometry()
         cbytes = csecs * (unsigned long) 512;
     
         printf("\n");
-        printf("  As reported by the drive: %d cylinders, %d heads %d sectors\n",
+        printf("  As reported by the drive: %u cylinders, %u heads %u sectors\n",
                idecyls, ideheads, idesecs);
         printf("  Capacity: %lu sectors (%lu bytes)\n", csecs, cbytes);
     }
@@ -576,7 +577,7 @@ void show_geometry()
                 (unsigned long) hdsecs;
         cbytes = csecs * (unsigned long) 512;
     
-        printf("  As stored in the partition table: %d cylinders, %d heads %d sectors\n",
+        printf("  As stored in the partition table: %u cylinders, %u heads %u sectors\n",
                 hdcyls, hdheads, hdsecs);
         printf("  Capacity: %lu sectors (%lu bytes)\n", csecs, cbytes);
     }
@@ -595,8 +596,10 @@ void show_method()
 
 void add_partition()
 {
-    int  i, n, val, first_free, max_cyl;
+    int i;
+    unsigned int  n, first_free, max_cyl;
     unsigned long hdsecs;
+    long val;
     char c, str[20];
 
     hdsecs = (unsigned long) idecyls *
@@ -627,14 +630,14 @@ void add_partition()
         return;
     }
 
-    printf("First cylinder (%d-%d, default %d): ",
+    printf("First cylinder (%u-%u, default %u): ",
                            first_free, max_cyl - 1, first_free);
     fgets(str, 20, stdin);
     if (str[0] == '\n') {
-        printf("Using default value %d\n", first_free);
+        printf("Using default value %u\n", first_free);
         val = first_free;
     } else {
-        val = atoi(str);
+        val = atol(str);
     }
     
     if ((val < 0) || (val > max_cyl)) {
@@ -643,11 +646,11 @@ void add_partition()
     }
     ptable[n].start = val;
 
-    printf("Last cylinder or +size or +sizeM or +sizeK (%d-%d, default %d): ",
+    printf("Last cylinder or +size or +sizeM or +sizeK (%u-%u, default %u): ",
                            val + 1, max_cyl, max_cyl);
     fgets(str, 20, stdin);
     if (str[0] == '\n') {
-        printf("Using default value %d\n", max_cyl);
+        printf("Using default value %u\n", max_cyl);
         val = max_cyl - ptable[n].start;
     } else {
         if (str[0] == '+') {
@@ -661,7 +664,7 @@ void add_partition()
                 if (i != 0) ++val;
             }
         } else {
-            val = atoi(str);
+            val = atol(str);
             val -= ptable[n].start;
             if (val <= 0) {
                 printf("Last cylinder must be larger than first cylinder.\n");
@@ -796,7 +799,8 @@ void toggle_method()
 void verify_table()
 {
     unsigned long allocsecs, hdsecs, ovlpsecs;
-    int  *p, i, j, cyls, heads, sectors;
+    unsigned int  cyls, heads, sectors;
+    int  *p, i, j;
     char *b;
     
     p = (int *) &hdbuf[goffs];
@@ -838,7 +842,7 @@ void verify_table()
        with a wrong or corrupt partition table */
     if (hdsecs < allocsecs) printf("%lu overallocated sectors.\n", allocsecs - hdsecs);
 
-    if (ovlpsecs > 0) printf("%d overlapped sectors\n", ovlpsecs);
+    if (ovlpsecs > 0) printf("%u overlapped sectors\n", ovlpsecs);
 
     printf("\n");
 }
